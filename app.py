@@ -1,237 +1,174 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import crypto_core  # Bizim yazdığımız kripto motorunu import ediyoruz!
-import os
+from tkinter import ttk, messagebox, filedialog
+import crypto_core
+import db_manager
 
 class SecureApp(tk.Tk):
-
     def __init__(self):
         super().__init__()
-
-        self.title("Secure Encryption Tool")
-        self.geometry("550x550") # Pencere boyutu
-        self.minsize(500, 500) # Minimum boyut
-
-        # Ana stil ayarları
-        style = ttk.Style(self)
-        style.configure("TButton", padding=6, relief="flat")
-        style.configure("TFrame", padding=10)
-        style.configure("TRadiobutton", padding=5)
-
-        # --- 1. PAROLA BÖLÜMÜ (Tüm modlar için ortak) ---
-        password_frame = ttk.Frame(self)
-        password_frame.pack(fill='x', padx=10, pady=5)
+        self.title("Secure Vault & Encryption Tool")
+        self.geometry("850x650")
+        db_manager.init_db()
         
-        ttk.Label(password_frame, text="Master Password:").pack(side=tk.LEFT, padx=5)
-        self.password_entry = ttk.Entry(password_frame, show="*")
-        self.password_entry.pack(side=tk.LEFT, fill='x', expand=True)
+        # Son işlemi takip etmek için durum değişkeni
+        self.last_action = None 
 
-        # --- 2. MOD SEÇİMİ (Radio Butonlar) ---
+        # Layout Ayarları
+        main_paned = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
+        main_paned.pack(fill='both', expand=True)
+
+        self.left_frame = ttk.Frame(main_paned, padding=10)
+        self.right_frame = ttk.Frame(main_paned, padding=10)
+        main_paned.add(self.left_frame, weight=3)
+        main_paned.add(self.right_frame, weight=1)
+
+        self.setup_left_panel()
+        self.setup_right_panel()
+        self.refresh_note_list()
+
+    def setup_left_panel(self):
+        # Üst Kısım: Parola ve Mod
+        ttk.Label(self.left_frame, text="Master Password:").pack(anchor=tk.W)
+        self.password_entry = ttk.Entry(self.left_frame, show="*")
+        self.password_entry.pack(fill='x', pady=5)
+
         self.mode_var = tk.StringVar(value="text")
-        mode_frame = ttk.Frame(self, padding=(10, 5))
-        mode_frame.pack(fill='x')
+        m_frame = ttk.Frame(self.left_frame)
+        m_frame.pack(fill='x', pady=5)
+        ttk.Radiobutton(m_frame, text="Text Mode", variable=self.mode_var, value="text", command=self.toggle_mode).pack(side=tk.LEFT)
+        ttk.Radiobutton(m_frame, text="File Mode", variable=self.mode_var, value="file", command=self.toggle_mode).pack(side=tk.LEFT, padx=15)
+
+        # --- TEXT UI ---
+        self.text_ui = ttk.Frame(self.left_frame)
+        ttk.Label(self.text_ui, text="Original:").pack(anchor=tk.W)
+        self.text_input = tk.Text(self.text_ui, height=7)
+        self.text_input.pack(fill='both', expand=True, pady=5)
+
+        ttk.Label(self.text_ui, text="Encrypted:").pack(anchor=tk.W)
+        self.text_output = tk.Text(self.text_ui, height=7)
+        self.text_output.pack(fill='both', expand=True, pady=5)
+
+        db_f = ttk.Frame(self.text_ui)
+        db_f.pack(fill='x', pady=5)
+        ttk.Label(db_f, text="Note Title:").pack(side=tk.LEFT)
+        self.title_entry = ttk.Entry(db_f)
+        self.title_entry.pack(side=tk.LEFT, fill='x', expand=True, padx=5)
+
+        btn_f = ttk.Frame(self.text_ui)
+        btn_f.pack(fill='x', pady=5)
+        ttk.Button(btn_f, text="Encrypt & Save", command=self.encrypt_and_save).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_f, text="Decrypt Text", command=self.decrypt_action).pack(side=tk.LEFT, padx=2)
         
-        ttk.Label(mode_frame, text="Mode:").pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="Text Mode", variable=self.mode_var, value="text", command=self.switch_mode).pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="File Mode", variable=self.mode_var, value="file", command=self.switch_mode).pack(side=tk.LEFT, padx=5)
+        # YENİ: Kopyalama Butonu
+        ttk.Button(btn_f, text="Copy Clipboard", command=self.copy_to_clipboard).pack(side=tk.LEFT, padx=2)
 
-        # --- 3. MODLARA ÖZEL PENCERELER (Frame) ---
-        self.container = ttk.Frame(self)
-        self.container.pack(fill='both', expand=True)
-
-        # İki ana frame'i (text ve file) üst üste koyuyoruz
-        self.text_frame = ttk.Frame(self.container)
-        self.file_frame = ttk.Frame(self.container)
-
-        self.text_frame.grid(row=0, column=0, sticky="nsew")
-        self.file_frame.grid(row=0, column=0, sticky="nsew")
+        # --- FILE UI ---
+        self.file_ui = ttk.Frame(self.left_frame)
+        ttk.Label(self.file_ui, text="File Path:").pack(anchor=tk.W)
+        self.file_path_entry = ttk.Entry(self.file_ui)
+        self.file_path_entry.pack(fill='x', pady=5)
+        ttk.Button(self.file_ui, text="Browse File", command=self.browse_file).pack(pady=5)
         
-        self.container.grid_rowconfigure(0, weight=1)
-        self.container.grid_columnconfigure(0, weight=1)
+        f_btn_f = ttk.Frame(self.file_ui)
+        f_btn_f.pack(pady=10)
+        ttk.Button(f_btn_f, text="Encrypt File", command=self.encrypt_file_action).pack(side=tk.LEFT, padx=5)
+        ttk.Button(f_btn_f, text="Decrypt File", command=self.decrypt_file_action).pack(side=tk.LEFT, padx=5)
 
-        # Bu framelerin içini dolduran fonksiyonları çağır
-        self.create_text_widgets()
-        self.create_file_widgets()
+        self.toggle_mode()
 
-        # --- 4. DURUM ÇUBUĞU (Alttaki mesaj) ---
-        self.status_var = tk.StringVar(value="Ready. Log file: secure_app.log")
-        status_bar = ttk.Label(self, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding=5)
-        status_bar.pack(side=tk.BOTTOM, fill='x')
+    def setup_right_panel(self):
+        ttk.Label(self.right_frame, text="Database Notes").pack()
+        self.notes_listbox = tk.Listbox(self.right_frame)
+        self.notes_listbox.pack(fill='both', expand=True, pady=5)
+        ttk.Button(self.right_frame, text="Load", command=self.load_note).pack(fill='x', pady=2)
+        ttk.Button(self.right_frame, text="Delete", command=self.delete_note).pack(fill='x', pady=2)
 
-        # Başlangıçta "text" modunu göster
-        self.switch_mode()
-
-    def create_text_widgets(self):
-        """Metin modu için gerekli arayüz elemanlarını (widget) oluşturur."""
-        ttk.Label(self.text_frame, text="Input Text (Plaintext):").pack(pady=(5,0), anchor=tk.W)
-        self.text_input = tk.Text(self.text_frame, height=8, width=50, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1)
-        self.text_input.pack(pady=5, fill='both', expand=True)
-
-        ttk.Label(self.text_frame, text="Output (Ciphertext / Decrypted):").pack(pady=(10,0), anchor=tk.W)
-        self.text_output = tk.Text(self.text_frame, height=8, width=50, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1)
-        self.text_output.pack(pady=5, fill='both', expand=True)
-
-        # Butonları içeren frame
-        btn_frame = ttk.Frame(self.text_frame, padding=0)
-        btn_frame.pack(pady=5, fill='x')
-        
-        ttk.Button(btn_frame, text="Encrypt Text", command=self.encrypt_text_action).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Decrypt Text", command=self.decrypt_text_action).pack(side=tk.LEFT, padx=5)
-        
-        # --- YENİ ÖZELLİK: PANO BUTONU ---
-        ttk.Button(btn_frame, text="Copy Output", command=self.copy_to_clipboard).pack(side=tk.RIGHT, padx=5)
-
-    def create_file_widgets(self):
-        """Dosya modu için gerekli arayüz elemanlarını (widget) oluşturur."""
-        file_container = ttk.Frame(self.file_frame)
-        file_container.pack(pady=20, fill='x')
-
-        self.file_path_var = tk.StringVar(value="No file selected.")
-        self.selected_file_label = ttk.Label(file_container, textvariable=self.file_path_var, font=("Helvetica", 10, "italic"))
-        self.selected_file_label.pack(pady=10)
-
-        ttk.Button(file_container, text="Browse for File...", command=self.browse_file).pack(pady=10)
-
-        file_btn_frame = ttk.Frame(file_container)
-        file_btn_frame.pack(pady=20)
-        ttk.Button(file_btn_frame, text="Encrypt File", command=self.encrypt_file_action).pack(side=tk.LEFT, padx=10)
-        ttk.Button(file_btn_frame, text="Decrypt File", command=self.decrypt_file_action).pack(side=tk.LEFT, padx=10)
-
-    # --- YARDIMCI VE AKSİYON FONKSİYONLARI ---
-
-    def get_password(self):
-        """Parolayı alır ve boş olup olmadığını kontrol eder."""
-        password = self.password_entry.get()
-        if not password:
-            messagebox.showwarning("Password Error", "Please enter a master password.")
-            self.status_var.set("Error: Password cannot be empty.")
-            return None
-        return password
-
-    def switch_mode(self):
-        """Radyo butona göre Text veya File frame'ini öne çıkarır."""
-        mode = self.mode_var.get()
-        if mode == "text":
-            self.file_frame.grid_remove()
-            self.text_frame.grid()
-            self.status_var.set("Text Mode activated.")
-        elif mode == "file":
-            self.text_frame.grid_remove()
-            self.file_frame.grid()
-            self.status_var.set("File Mode activated.")
-
+    # YENİ: Kopyalama Fonksiyonu
     def copy_to_clipboard(self):
-        """YENİ ÖZELLİK: Çıktı kutusundaki metni panoya kopyalar."""
-        try:
+        if self.last_action == "encrypt":
+            # Şifreleme yapıldıysa 'Input' (Original) alanını kopyala
+            content = self.text_input.get("1.0", tk.END).strip()
+            msg = "Giriş metni (Original) kopyalandı."
+        elif self.last_action == "decrypt":
+            # Deşifreleme yapıldıysa 'Output' (çözülen metin Original kutusuna gider) alanını kopyala
+            content = self.text_input.get("1.0", tk.END).strip()
+            msg = "Çözülen metin (Output) kopyalandı."
+        else:
+            messagebox.showwarning("Uyarı", "Lütfen önce bir işlem yapın.")
+            return
+
+        if content:
             self.clipboard_clear()
-            self.clipboard_append(self.text_output.get("1.0", tk.END).strip())
-            self.status_var.set("Output copied to clipboard!")
-        except Exception as e:
-            self.status_var.set(f"Error copying to clipboard: {e}")
+            self.clipboard_append(content)
+            messagebox.showinfo("Başarılı", msg)
+
+    def toggle_mode(self):
+        if self.mode_var.get() == "text":
+            self.file_ui.pack_forget()
+            self.text_ui.pack(fill='both', expand=True)
+        else:
+            self.text_ui.pack_forget()
+            self.file_ui.pack(fill='both', expand=True)
 
     def browse_file(self):
-        """Dosya seçme penceresini açar."""
-        # filedialog.askopenfilename, Mac'in doğal dosya seçme penceresini açar
-        file_path = filedialog.askopenfilename()
-        if file_path:
-            self.file_path_var.set(file_path)
-            self.status_var.set(f"Selected file: {os.path.basename(file_path)}")
-        else:
-            self.file_path_var.set("No file selected.")
-            self.status_var.set("File selection cancelled.")
+        path = filedialog.askopenfilename()
+        if path:
+            self.file_path_entry.delete(0, tk.END)
+            self.file_path_entry.insert(0, path)
 
-    # --- Kripto Çekirdeğini (crypto_core) Çağıran Fonksiyonlar ---
-
-    def encrypt_text_action(self):
-        password = self.get_password()
-        if not password: return
+    def encrypt_and_save(self):
+        pw, txt, title = self.password_entry.get(), self.text_input.get("1.0", tk.END).strip(), self.title_entry.get().strip()
+        if not pw or not txt: return
+        enc = crypto_core.encrypt_text(pw, txt)
+        self.text_output.delete("1.0", tk.END)
+        self.text_output.insert("1.0", enc)
         
-        plaintext = self.text_input.get("1.0", tk.END).strip()
-        if not plaintext:
-            messagebox.showwarning("Input Error", "Input text cannot be empty.")
-            return
-
-        self.status_var.set("Encrypting text... (This may take a second)")
-        self.update_idletasks() # Arayüzü güncel tut
+        self.last_action = "encrypt" # Durumu güncelle
         
-        result = crypto_core.encrypt_text(password, plaintext)
-        
-        self.text_output.delete("1.0", tk.END) # Önceki çıktıyı temizle
-        if result:
-            self.text_output.insert("1.0", result)
-            self.status_var.set("Text encrypted successfully. (Log updated)")
-        else:
-            self.status_var.set("Error during encryption. Check log.")
-            messagebox.showerror("Error", "An error occurred during encryption. Check 'secure_app.log' for details.")
+        if title:
+            db_manager.save_note(title, enc)
+            self.refresh_note_list()
 
-    def decrypt_text_action(self):
-        password = self.get_password()
-        if not password: return
-
-        packaged_data = self.text_output.get("1.0", tk.END).strip()
-        if not packaged_data:
-            messagebox.showwarning("Input Error", "Output/Input field is empty.")
-            return
+    def decrypt_action(self):
+        pw, data = self.password_entry.get(), self.text_output.get("1.0", tk.END).strip()
+        if not pw or not data: return
+        res = crypto_core.decrypt_text(pw, data)
+        if "[HATA]" not in res:
+            self.text_input.delete("1.0", tk.END)
+            self.text_input.insert("1.0", res)
             
-        self.status_var.set("Decrypting text... (This may take a second)")
-        self.update_idletasks()
-
-        result = crypto_core.decrypt_text(password, packaged_data)
-        
-        if "[HATA]" in result:
-            self.status_var.set("Decryption FAILED. Wrong password or corrupted data.")
-            messagebox.showerror("Decryption Failed", "Wrong password or data is corrupted. (Log updated)")
-        else:
-            self.text_output.delete("1.0", tk.END)
-            self.text_output.insert("1.0", result)
-            self.status_var.set("Text decrypted successfully. (Log updated)")
+            self.last_action = "decrypt" # Durumu güncelle
+        else: messagebox.showerror("Error", res)
 
     def encrypt_file_action(self):
-        password = self.get_password()
-        if not password: return
-
-        file_path = self.file_path_var.get()
-        if file_path == "No file selected.":
-            messagebox.showwarning("File Error", "Please browse and select a file first.")
-            return
-
-        self.status_var.set(f"Encrypting file... (This may take a second)")
-        self.update_idletasks()
-        
-        result_path = crypto_core.encrypt_file(password, file_path)
-        
-        if result_path and "[HATA]" not in result_path:
-            self.status_var.set(f"File encrypted and saved to: {result_path}")
-            messagebox.showinfo("Success", f"File encrypted successfully!\nSaved as: {result_path}")
-        else:
-            self.status_var.set("Error during file encryption. Check log.")
-            messagebox.showerror("Error", "An error occurred during file encryption. Check 'secure_app.log' for details.")
+        pw, path = self.password_entry.get(), self.file_path_entry.get()
+        if pw and path:
+            res = crypto_core.encrypt_file(pw, path)
+            if res: messagebox.showinfo("Success", f"File encrypted: {res}")
 
     def decrypt_file_action(self):
-        password = self.get_password()
-        if not password: return
+        pw, path = self.password_entry.get(), self.file_path_entry.get()
+        if pw and path:
+            res = crypto_core.decrypt_file(pw, path)
+            if "[HATA]" not in str(res): messagebox.showinfo("Success", f"File decrypted: {res}")
+            else: messagebox.showerror("Error", "Decryption failed.")
 
-        file_path = self.file_path_var.get()
-        if file_path == "No file selected.":
-            messagebox.showwarning("File Error", "Please browse and select a file first.")
-            return
-        if not file_path.endswith(".enc"):
-            messagebox.showwarning("File Error", "Please select a '.enc' file to decrypt.")
-            return
-            
-        self.status_var.set(f"Decrypting file... (This may take a second)")
-        self.update_idletasks()
+    def load_note(self):
+        sel = self.notes_listbox.curselection()
+        if sel:
+            self.text_output.delete("1.0", tk.END)
+            self.text_output.insert("1.0", db_manager.get_note_content(self.note_ids[sel[0]]))
 
-        result_path = crypto_core.decrypt_file(password, file_path)
+    def delete_note(self):
+        sel = self.notes_listbox.curselection()
+        if sel and messagebox.askyesno("Confirm", "Delete this note?"):
+            db_manager.delete_note(self.note_ids[sel[0]])
+            self.refresh_note_list()
 
-        if result_path and "[HATA]" not in result_path:
-            self.status_var.set(f"File decrypted and saved to: {result_path}")
-            messagebox.showinfo("Success", f"File decrypted successfully!\nSaved as: {result_path}")
-        else:
-            self.status_var.set("Decryption FAILED. Wrong password or corrupted data.")
-            messagebox.showerror("Decryption Failed", "Wrong password or file is corrupted. (Log updated)")
-
+    def refresh_note_list(self):
+        self.notes_listbox.delete(0, tk.END)
+        self.note_ids = [n[0] for n in db_manager.get_all_notes()]
+        for n in db_manager.get_all_notes(): self.notes_listbox.insert(tk.END, n[1])
 
 if __name__ == "__main__":
-    app = SecureApp()
-    app.mainloop()
+    SecureApp().mainloop()
