@@ -4,6 +4,3 @@ __pycache__/
 text_belgesi.txt
 text_belgesi.txt.enc
 text_belgesi.txt.dec
-# Local DB and logs
-secure_vault.db
-*.log
